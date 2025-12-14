@@ -5,3 +5,6 @@ ultralytics
 opencv-python-headless
 numpy
 supervision
+asyncpg
+databases[postgresql]
+python-dotenv

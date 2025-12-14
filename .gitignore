@@ -40,6 +40,10 @@ dist/
 build/
 *.egg-info/
 
+# Node
+node_modules/
+.npm
+
 # Temporary
 tmp/
 temp/

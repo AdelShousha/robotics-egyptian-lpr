@@ -8,19 +8,38 @@ Accepts images and returns license plate recognition results.
 import base64
 import cv2
 import numpy as np
+from datetime import datetime
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # Import the LPR service
 from lpr_service import LicensePlateRecognizer
 
+# Import database functions
+from database import (
+    connect_db, disconnect_db, insert_detection,
+    get_all_detections, get_vehicles_today_count, get_last_detection_time
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events."""
+    # Startup
+    await connect_db()
+    yield
+    # Shutdown
+    await disconnect_db()
+
+
 app = FastAPI(
     title="Egyptian License Plate Recognition API",
     description="API for recognizing Egyptian license plates with Arabic characters",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Enable CORS for all origins
@@ -41,8 +60,24 @@ class RecognitionResponse(BaseModel):
     success: bool
     plate: str = ""
     confidence: float = 0.0
-    image_url: str = ""
     error: Optional[str] = None
+
+
+class DetectionItem(BaseModel):
+    """Single detection record for dashboard."""
+    id: int
+    car_image: str
+    lp_image: str
+    lp_number: str
+    confidence: float
+    created_at: datetime
+
+
+class DashboardResponse(BaseModel):
+    """Response model for dashboard data."""
+    vehicles_today: int
+    last_detection: Optional[datetime] = None
+    detections: List[DetectionItem]
 
 
 def get_recognizer() -> LicensePlateRecognizer:
@@ -88,7 +123,7 @@ async def recognize_plate(imageFile: UploadFile = File(...)):
     Recognize license plate from uploaded image.
 
     Accepts multipart/form-data with an image file named 'imageFile'.
-    Returns JSON with plate text, confidence, and annotated image as base64.
+    Returns JSON with plate text and confidence. Stores result in database.
     """
     try:
         # Read image data
@@ -109,27 +144,29 @@ async def recognize_plate(imageFile: UploadFile = File(...)):
         result = rec.process_image_array(image)
 
         if result["success"]:
-            # Convert annotated crop to base64
-            image_url = ""
+            # Convert images to base64 for database storage
+            car_image_b64 = image_to_base64(image)
+            lp_image_b64 = ""
             if result["annotated_crop"] is not None:
-                image_url = image_to_base64(result["annotated_crop"])
+                lp_image_b64 = image_to_base64(result["annotated_crop"])
+
+            # Store in database
+            await insert_detection(
+                car_image=car_image_b64,
+                lp_image=lp_image_b64,
+                lp_number=result["plate_text"],
+                confidence=result["confidence"]
+            )
 
             return RecognitionResponse(
                 success=True,
                 plate=result["plate_text"],
-                confidence=result["confidence"],
-                image_url=image_url
+                confidence=result["confidence"]
             )
         else:
-            # Include partial image if available
-            image_url = ""
-            if result["annotated_crop"] is not None:
-                image_url = image_to_base64(result["annotated_crop"])
-
             return RecognitionResponse(
                 success=False,
-                error=result["error"],
-                image_url=image_url
+                error=result["error"]
             )
 
     except Exception as e:
@@ -143,6 +180,37 @@ async def recognize_plate(imageFile: UploadFile = File(...)):
 async def recognize_plate_alt(imageFile: UploadFile = File(...)):
     """Alternative endpoint without /api prefix."""
     return await recognize_plate(imageFile)
+
+
+@app.get("/api/dashboard", response_model=DashboardResponse)
+async def get_dashboard_data():
+    """
+    Get dashboard data including all detections, today's count, and last detection time.
+
+    Returns list of detections (newest first), vehicles detected today, and last detection timestamp.
+    """
+    detections = await get_all_detections()
+    vehicles_today = await get_vehicles_today_count()
+    last_detection = await get_last_detection_time()
+
+    # Convert database rows to DetectionItem objects
+    detection_items = [
+        DetectionItem(
+            id=d["id"],
+            car_image=d["car_image"],
+            lp_image=d["lp_image"],
+            lp_number=d["lp_number"],
+            confidence=d["confidence"],
+            created_at=d["created_at"]
+        )
+        for d in detections
+    ]
+
+    return DashboardResponse(
+        vehicles_today=vehicles_today,
+        last_detection=last_detection,
+        detections=detection_items
+    )
 
 
 # For local development
