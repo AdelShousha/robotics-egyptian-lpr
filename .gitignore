@@ -50,3 +50,6 @@ temp/
 
 # Claude
 .claude/
+
+# Dashboard (separate repo)
+dashboard/
