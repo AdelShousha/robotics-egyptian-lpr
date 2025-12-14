@@ -7,6 +7,19 @@ Handles connection and CRUD operations for license plate detections.
 import os
 from datetime import datetime, date
 from typing import List, Optional
+from pathlib import Path
+
+# Load .env file for local development
+try:
+    from dotenv import load_dotenv
+    # Look for .env in project root (parent of api/)
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"Loaded environment from {env_path}")
+except ImportError:
+    pass  # dotenv not installed, use system environment
+
 from databases import Database
 
 # Get database URL from environment variable
