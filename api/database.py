@@ -5,9 +5,12 @@ Handles connection and CRUD operations for license plate detections.
 """
 
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional
 from pathlib import Path
+
+# Egypt timezone (UTC+2)
+EGYPT_TZ = timezone(timedelta(hours=2))
 
 # Load .env file for local development
 try:
@@ -75,7 +78,7 @@ async def insert_detection(
         "lp_image": lp_image,
         "lp_number": lp_number,
         "confidence": confidence,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(EGYPT_TZ).replace(tzinfo=None)
     }
 
     result = await database.fetch_one(query=query, values=values)
