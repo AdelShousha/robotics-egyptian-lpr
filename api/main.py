@@ -5,7 +5,6 @@ FastAPI backend for ESP32-CAM integration.
 Accepts images and returns license plate recognition results.
 """
 
-import base64
 import cv2
 import numpy as np
 from datetime import datetime
@@ -24,6 +23,9 @@ from database import (
     connect_db, disconnect_db, insert_detection,
     get_all_detections, get_vehicles_today_count, get_last_detection_time
 )
+
+# Import Cloudinary helper
+from cloudinary_helper import upload_image
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -104,13 +106,6 @@ def get_recognizer() -> LicensePlateRecognizer:
     return recognizer
 
 
-def image_to_base64(image: np.ndarray) -> str:
-    """Convert OpenCV image to base64 data URL."""
-    _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    base64_str = base64.b64encode(buffer).decode('utf-8')
-    return f"data:image/jpeg;base64,{base64_str}"
-
-
 @app.get("/")
 async def root():
     """Health check endpoint."""
@@ -144,16 +139,16 @@ async def recognize_plate(imageFile: UploadFile = File(...)):
         result = rec.process_image_array(image)
 
         if result["success"]:
-            # Convert images to base64 for database storage
-            car_image_b64 = image_to_base64(image)
-            lp_image_b64 = ""
+            # Upload images to Cloudinary
+            car_image_url = upload_image(image, folder="lpr/cars")
+            lp_image_url = ""
             if result["annotated_crop"] is not None:
-                lp_image_b64 = image_to_base64(result["annotated_crop"])
+                lp_image_url = upload_image(result["annotated_crop"], folder="lpr/plates")
 
-            # Store in database
+            # Store URLs in database
             await insert_detection(
-                car_image=car_image_b64,
-                lp_image=lp_image_b64,
+                car_image=car_image_url,
+                lp_image=lp_image_url,
                 lp_number=result["plate_text"],
                 confidence=result["confidence"]
             )

@@ -8,3 +8,4 @@ supervision
 asyncpg
 databases[postgresql]
 python-dotenv
+cloudinary
