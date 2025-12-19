@@ -21,25 +21,27 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include "esp_http_server.h"
 
 // =============================================================================
 // CONFIGURATION - MODIFY THESE VALUES
 // =============================================================================
 
 // WiFi credentials
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+const char* ssid = "Mostafa Shaheen";
+const char* password = "88888888";
 
 // API Server - Change this to your deployed server URL
 // For local testing: "http://192.168.1.100:8000"
 // For Vercel/Railway: "https://your-app.vercel.app" or "https://your-app.railway.app"
-String serverName = "YOUR_SERVER_URL";
+String serverName = "https://robotics-egyptian-lpr-production.up.railway.app";
 String serverPath = "/api/recognize";
 
 // Ultrasonic sensor pins
-#define TRIG_PIN 13
-#define ECHO_PIN 12
+#define TRIG_PIN 13 // 5v
+#define ECHO_PIN 12 // 3.3v
 
 // Detection settings
 #define TRIGGER_DISTANCE_CM 15    // Trigger when object is within this distance (cm)
@@ -228,12 +230,12 @@ void flashOff() {
 
 String captureAndSendImage() {
   // Turn on flash for better image
-  flashOn();
+  // flashOn();
   delay(100);
 
   // Capture image
   camera_fb_t* fb = esp_camera_fb_get();
-  flashOff();
+  // flashOff();
 
   if (!fb) {
     Serial.println("Camera capture failed!");
@@ -262,12 +264,15 @@ String captureAndSendImage() {
 }
 
 String sendImageToAPI(camera_fb_t* fb) {
+  WiFiClientSecure client;
+  client.setInsecure();  // Skip certificate verification for HTTPS
+
   HTTPClient http;
 
   String fullURL = serverName + serverPath;
   Serial.println("Sending to: " + fullURL);
 
-  http.begin(fullURL);
+  http.begin(client, fullURL);
   http.addHeader("Content-Type", "multipart/form-data; boundary=CircuitDigest");
 
   // Build multipart form data
@@ -356,6 +361,96 @@ void parseResponse(String response) {
 }
 
 // =============================================================================
+// CAMERA STREAM SERVER
+// =============================================================================
+
+#define PART_BOUNDARY "123456789000000000000987654321"
+static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
+static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+httpd_handle_t stream_httpd = NULL;
+
+static esp_err_t stream_handler(httpd_req_t *req) {
+  camera_fb_t *fb = NULL;
+  esp_err_t res = ESP_OK;
+  char *part_buf[64];
+
+  res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+  if (res != ESP_OK) {
+    return res;
+  }
+
+  while (true) {
+    fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera capture failed");
+      res = ESP_FAIL;
+    } else {
+      if (fb->format != PIXFORMAT_JPEG) {
+        bool jpeg_converted = frame2jpg(fb, 80, &fb->buf, &fb->len);
+        if (!jpeg_converted) {
+          Serial.println("JPEG compression failed");
+          res = ESP_FAIL;
+        }
+      }
+      if (res == ESP_OK) {
+        size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, fb->len);
+        res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
+      }
+      if (res == ESP_OK) {
+        res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
+      }
+      if (res == ESP_OK) {
+        res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+      }
+      esp_camera_fb_return(fb);
+      if (res != ESP_OK) {
+        break;
+      }
+    }
+  }
+  return res;
+}
+
+static esp_err_t index_handler(httpd_req_t *req) {
+  const char* html = "<html><head><title>ESP32-CAM Stream</title></head>"
+                     "<body style='background:#000;margin:0;display:flex;justify-content:center;align-items:center;height:100vh;'>"
+                     "<img src='/stream' style='max-width:100%;max-height:100%;'>"
+                     "</body></html>";
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_send(req, html, strlen(html));
+}
+
+void startCameraServer() {
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = 80;
+
+  httpd_uri_t index_uri = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = index_handler,
+    .user_ctx  = NULL
+  };
+
+  httpd_uri_t stream_uri = {
+    .uri       = "/stream",
+    .method    = HTTP_GET,
+    .handler   = stream_handler,
+    .user_ctx  = NULL
+  };
+
+  if (httpd_start(&stream_httpd, &config) == ESP_OK) {
+    httpd_register_uri_handler(stream_httpd, &index_uri);
+    httpd_register_uri_handler(stream_httpd, &stream_uri);
+    Serial.println("Camera stream server started!");
+    Serial.print("View stream at: http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/");
+  }
+}
+
+// =============================================================================
 // MAIN SETUP AND LOOP
 // =============================================================================
 
@@ -374,6 +469,11 @@ void setup() {
   setupCamera();
   setupUltrasonic();
   setupWiFi();
+
+  // Start camera stream server (for debugging)
+  if (wifiConnected) {
+    startCameraServer();
+  }
 
   Serial.println();
   Serial.println("System ready!");
