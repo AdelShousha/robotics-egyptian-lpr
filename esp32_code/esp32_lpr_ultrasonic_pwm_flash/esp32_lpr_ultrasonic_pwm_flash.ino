@@ -1,5 +1,6 @@
 /*
  * Egyptian License Plate Recognition - ESP32-CAM with Ultrasonic Sensor
+ * VERSION: PWM Flash Control (Adjustable Brightness)
  *
  * Hardware:
  * - ESP32-CAM (AI-Thinker) with OV2640 camera
@@ -50,6 +51,7 @@ String serverPath = "/api/recognize";
 
 // Flash LED
 #define FLASH_PIN 4
+#define FLASH_BRIGHTNESS 64       // Flash brightness: 0-255 (0=off, 64=25%, 128=50%, 192=75%, 255=100%)
 
 // =============================================================================
 // CAMERA PIN DEFINITIONS (AI-Thinker ESP32-CAM)
@@ -161,8 +163,10 @@ void setupUltrasonic() {
 }
 
 void setupFlash() {
-  pinMode(FLASH_PIN, OUTPUT);
-  digitalWrite(FLASH_PIN, LOW);
+  // Setup PWM for flash control (ESP32 Arduino Core 3.x API)
+  ledcAttach(FLASH_PIN, 5000, 8);  // Pin, 5kHz frequency, 8-bit resolution (0-255)
+  ledcWrite(FLASH_PIN, 0);  // Start with flash off
+  Serial.println("Flash PWM initialized (adjustable brightness)");
 }
 
 // =============================================================================
@@ -221,11 +225,11 @@ bool isObjectDetected() {
 // =============================================================================
 
 void flashOn() {
-  digitalWrite(FLASH_PIN, HIGH);
+  ledcWrite(FLASH_PIN, FLASH_BRIGHTNESS);  // Set to configured brightness
 }
 
 void flashOff() {
-  digitalWrite(FLASH_PIN, LOW);
+  ledcWrite(FLASH_PIN, 0);  // Turn off
 }
 
 String captureAndSendImage() {
@@ -462,6 +466,7 @@ void setup() {
   Serial.println("========================================");
   Serial.println("Egyptian License Plate Recognition");
   Serial.println("ESP32-CAM with Ultrasonic Trigger");
+  Serial.println("PWM Flash Control Version");
   Serial.println("========================================");
 
   // Initialize components
@@ -478,6 +483,7 @@ void setup() {
   Serial.println();
   Serial.println("System ready!");
   Serial.printf("Trigger distance: %d cm\n", TRIGGER_DISTANCE_CM);
+  Serial.printf("Flash brightness: %d/255 (%d%%)\n", FLASH_BRIGHTNESS, (FLASH_BRIGHTNESS * 100) / 255);
   Serial.println("Waiting for object detection...");
 }
 
